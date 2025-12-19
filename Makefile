@@ -1,0 +1,3 @@
+test:
+	go test -c -o mdns_tests.exe ./...
+	mdns_tests.exe

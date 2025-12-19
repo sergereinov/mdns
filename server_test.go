@@ -1,5 +1,7 @@
 // Copyright IBM Corp. 2014, 2025
 // SPDX-License-Identifier: MIT
+//
+// Updated by SR @ 2025
 
 package mdns
 
@@ -22,7 +24,10 @@ func TestServer_StartStop(t *testing.T) {
 }
 
 func TestServer_Lookup(t *testing.T) {
-	serv, err := NewServer(&Config{Zone: makeServiceWithServiceName(t, "_foobar._tcp")})
+	serv, err := NewServer(&Config{
+		Zone:            makeServiceWithServiceName(t, "_foobar._tcp"),
+		IpMulticastLoop: true,
+	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
