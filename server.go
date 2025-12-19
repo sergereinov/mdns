@@ -1,5 +1,7 @@
 // Copyright IBM Corp. 2014, 2025
 // SPDX-License-Identifier: MIT
+//
+// Updated by SR @ 2025
 
 package mdns
 
@@ -11,6 +13,8 @@ import (
 	"sync/atomic"
 
 	"github.com/miekg/dns"
+	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 )
 
 const (
@@ -36,10 +40,40 @@ type Config struct {
 	// Zone must be provided to support responding to queries
 	Zone Zone
 
-	// Iface if provided binds the multicast listener to the given
+	// ~~Iface if provided binds the multicast listener to the given
 	// interface. If not provided, the system default multicase interface
-	// is used.
+	// is used.~~
+	//
+	// Iface if provided used in net.ListenMulticastUDP, which leads to:
+	//
+	// Sets IP_MULTICAST_IF socket option and this:
+	//  - Windows docs says: Sets the **outgoing** interface for sending IP multicast traffic.
+	//    This option does not change the default interface for receiving multicast traffic.
+	//  - (In fact, the IP address of this iFace is used as optval in setsockopt.
+	//    The first IP address is selected, even if the interface has multiple
+	//    IP addresses.)
+	//  - Google AI says: The IP_MULTICAST_IF socket option in Linux is used to specify
+	//    the local network interface for sending **outgoing** IP multicast datagrams.
+	//    By default, the kernel selects an appropriate interface if this option is not set
+	//    (usually the interface associated with the default unicast route).
+	//
+	// Then it use IP_ADD_MEMBERSHIP socket option to join the multicast group:
+	//  - Windows docs says: Sends an IGMP (Internet Group Management Protocol) report to local
+	//    routers. This ensures that the routers forward traffic for that multicast group
+	//    to the host's network segment.
+	//  - Google AI says: It instructs the networking stack to receive packets sent
+	//    to a specific multicast IP address on a designated local network interface.
+	//  - (In fact, the IP address of this iFace is reported/associated for packet reception,
+	//    and it looks like binding.
+	//    The first IP address is selected, even if the interface has multiple
+	//    IP addresses.)
 	Iface *net.Interface
+
+	// Enable multicast loopback (IP_MULTICAST_LOOP) on IPv4 and IPv6
+	//  - For a socket that is joined to one or more multicast groups,
+	//    this controls whether it will receive a copy of outgoing packets
+	//    sent to those multicast groups via the selected multicast interface.
+	IpMulticastLoop bool
 
 	// LogEmptyResponses indicates the server should print an informative message
 	// when there is an mDNS query for which the server has no response.
@@ -91,6 +125,12 @@ func NewServer(config *Config) (*Server, error) {
 		go s.recv(s.ipv6List)
 	}
 
+	if config.IpMulticastLoop {
+		if err := s.setIpMulticastLoop(); err != nil {
+			s.config.Logger.Printf("[ERR] mdns: failed to set IP_MULTICAST_LOOP: %v", err)
+		}
+	}
+
 	return s, nil
 }
 
@@ -108,6 +148,22 @@ func (s *Server) Shutdown() error {
 	}
 	if s.ipv6List != nil {
 		s.ipv6List.Close()
+	}
+	return nil
+}
+
+func (s *Server) setIpMulticastLoop() error {
+	if s.ipv4List != nil {
+		p := ipv4.NewPacketConn(s.ipv4List)
+		if err := p.SetMulticastLoopback(true); err != nil {
+			return err
+		}
+	}
+	if s.ipv6List != nil {
+		p2 := ipv6.NewPacketConn(s.ipv6List)
+		if err := p2.SetMulticastLoopback(true); err != nil {
+			return err
+		}
 	}
 	return nil
 }

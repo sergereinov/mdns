@@ -1,5 +1,7 @@
 // Copyright IBM Corp. 2014, 2025
 // SPDX-License-Identifier: MIT
+//
+// Updated by SR @ 2025
 
 package mdns
 
@@ -44,7 +46,10 @@ type QueryParam struct {
 	Service             string               // Service to lookup
 	Domain              string               // Lookup domain, default "local"
 	Timeout             time.Duration        // Lookup timeout, default 1 second
-	Interface           *net.Interface       // Multicast interface to use
+	Interface           *net.Interface       // Multicast interface to use (same as for server Config.Iface)
+	BindToIPv4          *net.IP              // Explicitly specify the IPv4 address to bind to as dst IP for incoming unicast and as src IP for all outgoing packets.
+	BindToIPv6          *net.IP              // Explicitly specify the IPv6 address to bind to as dst IP for incoming unicast and as src IP for all outgoing packets.
+	IpMulticastLoop     bool                 // Enable multicast loopback (IP_MULTICAST_LOOP) on IPv4 and IPv6 (same as for server Config.IpMulticastLoop)
 	Entries             chan<- *ServiceEntry // Entries Channel
 	WantUnicastResponse bool                 // Unicast response desired, as per 5.4 in RFC
 	DisableIPv4         bool                 // Whether to disable usage of IPv4 for MDNS operations. Does not affect discovered addresses.
@@ -83,7 +88,7 @@ func QueryContext(ctx context.Context, params *QueryParam) error {
 		params.Logger = log.Default()
 	}
 	// Create a new client
-	client, err := newClient(!params.DisableIPv4, !params.DisableIPv6, params.Logger)
+	client, err := newClient(!params.DisableIPv4, params.BindToIPv4, !params.DisableIPv6, params.BindToIPv6, params.Logger)
 	if err != nil {
 		return err
 	}
@@ -101,6 +106,13 @@ func QueryContext(ctx context.Context, params *QueryParam) error {
 	// Set the multicast interface
 	if params.Interface != nil {
 		if err := client.setInterface(params.Interface); err != nil {
+			return err
+		}
+	}
+
+	// Enable multicast loopback (IP_MULTICAST_LOOP)
+	if params.IpMulticastLoop {
+		if err := client.setIpMulticastLoop(); err != nil {
 			return err
 		}
 	}
@@ -144,7 +156,7 @@ type client struct {
 
 // NewClient creates a new mdns Client that can be used to query
 // for records
-func newClient(v4 bool, v6 bool, logger *log.Logger) (*client, error) {
+func newClient(v4 bool, bindToIp4 *net.IP, v6 bool, bindToIp6 *net.IP, logger *log.Logger) (*client, error) {
 	if !v4 && !v6 {
 		return nil, fmt.Errorf("Must enable at least one of IPv4 and IPv6 querying")
 	}
@@ -159,13 +171,21 @@ func newClient(v4 bool, v6 bool, logger *log.Logger) (*client, error) {
 
 	// Establish unicast connections
 	if v4 {
-		uconn4, err = net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+		if bindToIp4 != nil {
+			uconn4, err = net.ListenUDP("udp4", &net.UDPAddr{IP: *bindToIp4, Port: 0})
+		} else {
+			uconn4, err = net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+		}
 		if err != nil {
 			logger.Printf("[ERR] mdns: Failed to bind to udp4 port: %v", err)
 		}
 	}
 	if v6 {
-		uconn6, err = net.ListenUDP("udp6", &net.UDPAddr{IP: net.IPv6zero, Port: 0})
+		if bindToIp6 != nil {
+			uconn6, err = net.ListenUDP("udp6", &net.UDPAddr{IP: *bindToIp6, Port: 0})
+		} else {
+			uconn6, err = net.ListenUDP("udp6", &net.UDPAddr{IP: net.IPv6zero, Port: 0})
+		}
 		if err != nil {
 			logger.Printf("[ERR] mdns: Failed to bind to udp6 port: %v", err)
 		}
@@ -268,6 +288,24 @@ func (c *client) setInterface(iface *net.Interface) error {
 		}
 		p2 = ipv6.NewPacketConn(c.ipv6MulticastConn)
 		if err := p2.SetMulticastInterface(iface); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// setIpMulticastLoop restores IP_MULTICAST_LOOP option in case someone wants to send packets via MulticastConn.
+// Otherwise, this option remains disabled after ListenMulticastUDP.
+func (c *client) setIpMulticastLoop() error {
+	if c.use_ipv4 && c.ipv4MulticastConn != nil {
+		p := ipv4.NewPacketConn(c.ipv4MulticastConn)
+		if err := p.SetMulticastLoopback(true); err != nil {
+			return err
+		}
+	}
+	if c.use_ipv6 && c.ipv6MulticastConn != nil {
+		p2 := ipv6.NewPacketConn(c.ipv6MulticastConn)
+		if err := p2.SetMulticastLoopback(true); err != nil {
 			return err
 		}
 	}
