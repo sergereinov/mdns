@@ -17,9 +17,10 @@ server, err := mdns.NewServer(&mdns.Config{
 Added the ability to explicitly specify local IPv4 and IPv6 addresses for binding a unicast socket used to send multicast mDNS queries. AFAIK, this is a better way to select an IP subnet for UDP multicast communication than simply binding the socket to Zero-IP. This is especially true for multihomed systems with multiple active network interfaces and multiple active IP addresses on some of them.
 
 ```go
+localIP := net.ParseIP("192.168.155.34")
 params := mdns.DefaultParams(service)
 // ...
-params.BindToIPv4 = net.ParseIP("192.168.155.34") // binds to subnet via known local IP within the subnet
+params.BindToIPv4 = &localIP // binds to subnet via known local IP within the subnet
 // ...
 mdns.Query(params)
 ```
